@@ -1,0 +1,1400 @@
+---
+Description: "(SO0124) - Streaming Data Solution for Amazon Kinesis (APIGW -> KDS
+  -> Lambda). Version v1.9.3"
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Amazon API Gateway configuration
+      Parameters:
+      - ThrottlingRateLimit
+      - ThrottlingBurstLimit
+    - Label:
+        default: Amazon Kinesis Data Streams configuration
+      Parameters:
+      - ShardCount
+      - RetentionHours
+      - EnableEnhancedMonitoring
+    - Label:
+        default: AWS Lambda consumer configuration
+      Parameters:
+      - BatchSize
+      - ParallelizationFactor
+      - MaxRetryAttempts
+    ParameterLabels:
+      ThrottlingRateLimit:
+        default: Steady-state requests per second
+      ThrottlingBurstLimit:
+        default: Burst requests per second
+      ShardCount:
+        default: Number of open shards
+      RetentionHours:
+        default: Data retention period (hours)
+      EnableEnhancedMonitoring:
+        default: Enable enhanced (shard-level) metrics
+      BatchSize:
+        default: Largest number of records that will be read from the stream at once
+      ParallelizationFactor:
+        default: Number of batches to process from each shard concurrently
+      MaxRetryAttempts:
+        default: Maximum number of times to retry when the function returns an error
+  cdk_nag:
+    rules_to_suppress:
+    - reason: IAM role requires more permissions
+      id: AwsSolutions-IAM5
+    - reason: SQS is already a deadletter queue
+      id: AwsSolutions-SQS3
+    - reason: Request Validation happens by default with construct and more validations
+        can be added by customer
+      id: AwsSolutions-APIG2
+    - reason: REST API stage is not associated with AWS WAFv2 web ACL because the
+        solution is data agnostic
+      id: AwsSolutions-APIG3
+    - reason: Customer will need to setup MFA with their information that they want
+        to provide
+      id: AwsSolutions-COG2
+Parameters:
+  ShardCount:
+    Type: Number
+    Default: 2
+    MaxValue: 200
+    MinValue: 1
+  RetentionHours:
+    Type: Number
+    Default: 24
+    MaxValue: 8760
+    MinValue: 24
+  EnableEnhancedMonitoring:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+    - 'true'
+    - 'false'
+  ThrottlingRateLimit:
+    Type: Number
+    Default: 100
+    MaxValue: 10000
+    MinValue: 1
+  ThrottlingBurstLimit:
+    Type: Number
+    Default: 50
+    MaxValue: 5000
+    MinValue: 0
+  BatchSize:
+    Type: Number
+    Default: 100
+    MaxValue: 10000
+    MinValue: 1
+  ParallelizationFactor:
+    Type: Number
+    Default: 1
+    MaxValue: 10
+    MinValue: 1
+  MaxRetryAttempts:
+    Type: Number
+    Default: 3
+    MaxValue: 10000
+    MinValue: 1
+Resources:
+  KdsDataStream4BCE778D:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      RetentionPeriodHours:
+        Ref: RetentionHours
+      ShardCount:
+        Ref: ShardCount
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: alias/aws/kinesis
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/Kds/DataStream/Resource
+  KdsRole44D602FE:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource:
+              Fn::Join:
+              - ''
+              - - 'arn:'
+                - Ref: AWS::Partition
+                - ":logs:"
+                - Ref: AWS::Region
+                - ":"
+                - Ref: AWS::AccountId
+                - ":log-group:/aws/lambda/*"
+          Version: '2012-10-17'
+        PolicyName: CloudWatchLogsPolicy
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - kinesis:EnableEnhancedMonitoring
+            - kinesis:DisableEnhancedMonitoring
+            Effect: Allow
+            Resource: "*"
+          Version: '2012-10-17'
+        PolicyName: MonitoringPolicy
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/Kds/Role/Role/Resource
+      guard:
+        SuppressedRules:
+        - IAM_NO_INLINE_POLICY_CHECK
+      cfn_nag:
+        rules_to_suppress:
+        - id: W11
+          reason: Kinesis enhanced monitoring actions do not support resource level
+            permissions
+  KdsCustomResource9D8AB3E8:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket:
+          Fn::Sub: solutions-${AWS::Region}
+        S3Key: streaming-data-solution-for-amazon-kinesis/v1.9.3/assetc3c86cc19629c2a8d9772fd5ad57a08996a7243616c6396092c9df7c00842c5a.zip
+      Environment:
+        Variables:
+          AWS_SDK_USER_AGENT: '{ "user_agent_extra": "AwsSolution/SO0124/v1.9.3" }'
+      Handler: lambda_function.handler
+      Role:
+        Fn::GetAtt:
+        - KdsRole44D602FE
+        - Arn
+      Runtime: python3.12
+      Timeout: 30
+    DependsOn:
+    - KdsRole44D602FE
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/Kds/CustomResource/Resource
+      aws:asset:path: asset.c3c86cc19629c2a8d9772fd5ad57a08996a7243616c6396092c9df7c00842c5a
+      aws:asset:is-bundled: false
+      aws:asset:property: Code
+      cfn_nag:
+        rules_to_suppress:
+        - id: W89
+          reason: This function does not need to be deployed in a VPC
+        - id: W92
+          reason: This function does not require reserved concurrency
+  KdsEnhancedMonitoringF4495F43:
+    Type: Custom::EnhancedMonitoring
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+        - KdsCustomResource9D8AB3E8
+        - Arn
+      EnableEnhancedMonitoring:
+        Ref: EnableEnhancedMonitoring
+      StreamName:
+        Ref: KdsDataStream4BCE778D
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/Kds/EnhancedMonitoring/Default
+  ApiUserPool7811AFAD:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+        - Name: verified_phone_number
+          Priority: 1
+        - Name: verified_email
+          Priority: 2
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      EmailVerificationMessage: The verification code to your new account is {####}
+      EmailVerificationSubject: Verify your new account
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 1
+      Schema:
+      - Mutable: true
+        Name: given_name
+        Required: true
+      - Mutable: true
+        Name: email
+        Required: true
+      SmsVerificationMessage: The verification code to your new account is {####}
+      UserPoolAddOns:
+        AdvancedSecurityMode: ENFORCED
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_CODE
+        EmailMessage: The verification code to your new account is {####}
+        EmailSubject: Verify your new account
+        SmsMessage: The verification code to your new account is {####}
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiUserPool/Resource
+  ApiUserPoolClient534B7097:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      AllowedOAuthFlows:
+      - implicit
+      - code
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+      - profile
+      - phone
+      - email
+      - openid
+      - aws.cognito.signin.user.admin
+      CallbackURLs:
+      - https://example.com
+      SupportedIdentityProviders:
+      - COGNITO
+      UserPoolId:
+        Ref: ApiUserPool7811AFAD
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiUserPoolClient/Resource
+  ApiAuthorizer68095F41:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      IdentitySource: method.request.header.Authorization
+      Name: streamingdatasolutionforkinesisusingapigatewayandlambdaApiAuthorizerDC6EA8B3
+      ProviderARNs:
+      - Fn::GetAtt:
+        - ApiUserPool7811AFAD
+        - Arn
+      RestApiId:
+        Ref: ApiGwKdsRestApi29A93B97
+      Type: COGNITO_USER_POOLS
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiAuthorizer/Resource
+  ApiGwKdsApiAccessLogGroupB2EECABA:
+    Type: AWS::Logs::LogGroup
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/ApiAccessLogGroup/Resource
+      cfn_nag:
+        rules_to_suppress:
+        - id: W86
+          reason: Retention period for CloudWatchLogs LogGroups are set to 'Never
+            Expire' to preserve customer data indefinitely
+        - id: W84
+          reason: Log group data is always encrypted in CloudWatch Logs using an AWS
+            Managed KMS Key
+  ApiGwKdsRestApi29A93B97:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      EndpointConfiguration:
+        Types:
+        - EDGE
+      Name:
+        Fn::Join:
+        - ''
+        - - Ref: AWS::StackName
+          - "-kinesis-proxy"
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/RestApi/Resource
+  ApiGwKdsRestApiDeploymentDA106824044675c6903e87e8b3187023b1af6795:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      Description: Automatically created by the RestApi construct
+      RestApiId:
+        Ref: ApiGwKdsRestApi29A93B97
+    DependsOn:
+    - ApiGwKdsRestApirecordPOSTD7AD7A1E
+    - ApiGwKdsRestApirecord112C1672
+    - ApiGwKdsRestApirecordsPOSTA86BC306
+    - ApiGwKdsRestApirecords317326FA
+    - ApiGwKdsRestApiPutRecordModelB673C6C4
+    - ApiGwKdsRestApiPutRecordsModel6B0FC16F
+    - ApiGwKdsRestApirequestvalidatorD3924B9D
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/RestApi/Deployment/Resource
+      cfn_nag:
+        rules_to_suppress:
+        - id: W45
+          reason: ApiGateway has AccessLogging enabled in AWS::ApiGateway::Stage resource,
+            but cfn_nag checks for it in AWS::ApiGateway::Deployment resource
+  ApiGwKdsRestApiDeploymentStageprod454BD4B8:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      AccessLogSetting:
+        DestinationArn:
+          Fn::GetAtt:
+          - ApiGwKdsApiAccessLogGroupB2EECABA
+          - Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","user":"$context.identity.user","caller":"$context.identity.caller","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength"}'
+      DeploymentId:
+        Ref: ApiGwKdsRestApiDeploymentDA106824044675c6903e87e8b3187023b1af6795
+      MethodSettings:
+      - DataTraceEnabled: false
+        HttpMethod: "*"
+        LoggingLevel: INFO
+        ResourcePath: "/*"
+      - DataTraceEnabled: false
+        HttpMethod: "*"
+        ResourcePath: "/*"
+        ThrottlingBurstLimit:
+          Ref: ThrottlingBurstLimit
+        ThrottlingRateLimit:
+          Ref: ThrottlingRateLimit
+      RestApiId:
+        Ref: ApiGwKdsRestApi29A93B97
+      StageName: prod
+      TracingEnabled: true
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/RestApi/DeploymentStage.prod/Resource
+      guard:
+        SuppressedRules:
+        - API_GW_CACHE_ENABLED_AND_ENCRYPTED
+  ApiGwKdsRestApirecord112C1672:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId:
+        Fn::GetAtt:
+        - ApiGwKdsRestApi29A93B97
+        - RootResourceId
+      PathPart: record
+      RestApiId:
+        Ref: ApiGwKdsRestApi29A93B97
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/RestApi/Default/record/Resource
+  ApiGwKdsRestApirecordPOSTD7AD7A1E:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId:
+        Ref: ApiAuthorizer68095F41
+      HttpMethod: POST
+      Integration:
+        Credentials:
+          Fn::GetAtt:
+          - ApiGwKdsapigatewayroleA9E076CF
+          - Arn
+        IntegrationHttpMethod: POST
+        IntegrationResponses:
+        - StatusCode: '200'
+        - ResponseTemplates:
+            text/html: Error
+          SelectionPattern: '500'
+          StatusCode: '500'
+        PassthroughBehavior: NEVER
+        RequestParameters:
+          integration.request.header.Content-Type: "'x-amz-json-1.1'"
+        RequestTemplates:
+          application/json:
+            Fn::Join:
+            - ''
+            - - '{ "StreamName": "'
+              - Ref: KdsDataStream4BCE778D
+              - '", "Data": "$util.base64Encode($input.json(''$.data''))", "PartitionKey":
+                "$input.path(''$.partitionKey'')" }'
+        Type: AWS
+        Uri:
+          Fn::Join:
+          - ''
+          - - 'arn:'
+            - Ref: AWS::Partition
+            - ":apigateway:"
+            - Ref: AWS::Region
+            - ":kinesis:action/PutRecord"
+      MethodResponses:
+      - ResponseParameters:
+          method.response.header.Content-Type: true
+        StatusCode: '200'
+      - ResponseParameters:
+          method.response.header.Content-Type: true
+        StatusCode: '500'
+      RequestModels:
+        application/json:
+          Ref: ApiGwKdsRestApiPutRecordModelB673C6C4
+      RequestValidatorId:
+        Ref: ApiGwKdsRestApirequestvalidatorD3924B9D
+      ResourceId:
+        Ref: ApiGwKdsRestApirecord112C1672
+      RestApiId:
+        Ref: ApiGwKdsRestApi29A93B97
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/RestApi/Default/record/POST/Resource
+  ApiGwKdsRestApirecords317326FA:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId:
+        Fn::GetAtt:
+        - ApiGwKdsRestApi29A93B97
+        - RootResourceId
+      PathPart: records
+      RestApiId:
+        Ref: ApiGwKdsRestApi29A93B97
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/RestApi/Default/records/Resource
+  ApiGwKdsRestApirecordsPOSTA86BC306:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId:
+        Ref: ApiAuthorizer68095F41
+      HttpMethod: POST
+      Integration:
+        Credentials:
+          Fn::GetAtt:
+          - ApiGwKdsapigatewayroleA9E076CF
+          - Arn
+        IntegrationHttpMethod: POST
+        IntegrationResponses:
+        - StatusCode: '200'
+        - ResponseTemplates:
+            text/html: Error
+          SelectionPattern: '500'
+          StatusCode: '500'
+        PassthroughBehavior: NEVER
+        RequestParameters:
+          integration.request.header.Content-Type: "'x-amz-json-1.1'"
+        RequestTemplates:
+          application/json:
+            Fn::Join:
+            - ''
+            - - '{ "StreamName": "'
+              - Ref: KdsDataStream4BCE778D
+              - '", "Records": [ #foreach($elem in $input.path(''$.records'')) { "Data":
+                "$util.base64Encode($elem.data)", "PartitionKey": "$elem.partitionKey"}#if($foreach.hasNext),#end
+                #end ] }'
+        Type: AWS
+        Uri:
+          Fn::Join:
+          - ''
+          - - 'arn:'
+            - Ref: AWS::Partition
+            - ":apigateway:"
+            - Ref: AWS::Region
+            - ":kinesis:action/PutRecords"
+      MethodResponses:
+      - ResponseParameters:
+          method.response.header.Content-Type: true
+        StatusCode: '200'
+      - ResponseParameters:
+          method.response.header.Content-Type: true
+        StatusCode: '500'
+      RequestModels:
+        application/json:
+          Ref: ApiGwKdsRestApiPutRecordsModel6B0FC16F
+      RequestValidatorId:
+        Ref: ApiGwKdsRestApirequestvalidatorD3924B9D
+      ResourceId:
+        Ref: ApiGwKdsRestApirecords317326FA
+      RestApiId:
+        Ref: ApiGwKdsRestApi29A93B97
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/RestApi/Default/records/POST/Resource
+  ApiGwKdsRestApiUsagePlan2FB07718:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      ApiStages:
+      - ApiId:
+          Ref: ApiGwKdsRestApi29A93B97
+        Stage:
+          Ref: ApiGwKdsRestApiDeploymentStageprod454BD4B8
+        Throttle: {}
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/RestApi/UsagePlan/Resource
+  ApiGwKdsRestApirequestvalidatorD3924B9D:
+    Type: AWS::ApiGateway::RequestValidator
+    Properties:
+      Name: request-body-validator
+      RestApiId:
+        Ref: ApiGwKdsRestApi29A93B97
+      ValidateRequestBody: true
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/RestApi/request-validator/Resource
+  ApiGwKdsRestApiPutRecordModelB673C6C4:
+    Type: AWS::ApiGateway::Model
+    Properties:
+      ContentType: application/json
+      Description: PutRecord proxy single-record payload
+      Name: PutRecordModel
+      RestApiId:
+        Ref: ApiGwKdsRestApi29A93B97
+      Schema:
+        "$schema": http://json-schema.org/draft-04/schema#
+        title: PutRecord proxy single-record payload
+        type: object
+        required:
+        - data
+        - partitionKey
+        properties:
+          data:
+            type: string
+          partitionKey:
+            type: string
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/RestApi/PutRecordModel/Resource
+  ApiGwKdsRestApiPutRecordsModel6B0FC16F:
+    Type: AWS::ApiGateway::Model
+    Properties:
+      ContentType: application/json
+      Description: PutRecords proxy payload data
+      Name: PutRecordsModel
+      RestApiId:
+        Ref: ApiGwKdsRestApi29A93B97
+      Schema:
+        "$schema": http://json-schema.org/draft-04/schema#
+        title: PutRecords proxy payload data
+        type: object
+        required:
+        - records
+        properties:
+          records:
+            type: array
+            items:
+              type: object
+              required:
+              - data
+              - partitionKey
+              properties:
+                data:
+                  type: string
+                partitionKey:
+                  type: string
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/RestApi/PutRecordsModel/Resource
+  ApiGwKdsLambdaRestApiCloudWatchRole5EB37340:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: apigateway.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:DescribeLogGroups
+            - logs:DescribeLogStreams
+            - logs:PutLogEvents
+            - logs:GetLogEvents
+            - logs:FilterLogEvents
+            Effect: Allow
+            Resource:
+              Fn::Join:
+              - ''
+              - - 'arn:'
+                - Ref: AWS::Partition
+                - ":logs:"
+                - Ref: AWS::Region
+                - ":"
+                - Ref: AWS::AccountId
+                - ":*"
+          Version: '2012-10-17'
+        PolicyName: LambdaRestApiCloudWatchRolePolicy
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/LambdaRestApiCloudWatchRole/Resource
+      guard:
+        SuppressedRules:
+        - IAM_NO_INLINE_POLICY_CHECK
+  ApiGwKdsLambdaRestApiAccount52A008F0:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn:
+        Fn::GetAtt:
+        - ApiGwKdsLambdaRestApiCloudWatchRole5EB37340
+        - Arn
+    DependsOn:
+    - ApiGwKdsRestApi29A93B97
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/LambdaRestApiAccount
+  ApiGwKdsapigatewayroleA9E076CF:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: apigateway.amazonaws.com
+        Version: '2012-10-17'
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/api-gateway-role/Resource
+  ApiGwKdsapigatewayroleDefaultPolicy4457B12C:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action:
+          - kinesis:ListShards
+          - kinesis:PutRecord
+          - kinesis:PutRecords
+          Effect: Allow
+          Resource:
+            Fn::GetAtt:
+            - KdsDataStream4BCE778D
+            - Arn
+        Version: '2012-10-17'
+      PolicyName: ApiGwKdsapigatewayroleDefaultPolicy4457B12C
+      Roles:
+      - Ref: ApiGwKdsapigatewayroleA9E076CF
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/api-gateway-role/DefaultPolicy/Resource
+  ApiGwKdsKinesisStreamGetRecordsIteratorAgeAlarmB586CFCF:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Consumer Record Processing Falling Behind, there is risk for
+        data loss due to record expiration.
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      MetricName: GetRecords.IteratorAgeMilliseconds
+      Namespace: AWS/Kinesis
+      Period: 300
+      Statistic: Maximum
+      Threshold: 43200000
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/KinesisStreamGetRecordsIteratorAgeAlarm/Resource
+  ApiGwKdsKinesisStreamReadProvisionedThroughputExceededAlarm6EE19E9E:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Consumer Application is Reading at a Slower Rate Than Expected.
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 1
+      MetricName: ReadProvisionedThroughputExceeded
+      Namespace: AWS/Kinesis
+      Period: 300
+      Statistic: Average
+      Threshold: 0
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/ApiGwKds/KinesisStreamReadProvisionedThroughputExceededAlarm/Resource
+  KdsLambdaLambdaFunctionServiceRole0D5E8A79:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource:
+              Fn::Join:
+              - ''
+              - - 'arn:'
+                - Ref: AWS::Partition
+                - ":logs:"
+                - Ref: AWS::Region
+                - ":"
+                - Ref: AWS::AccountId
+                - ":log-group:/aws/lambda/*"
+          Version: '2012-10-17'
+        PolicyName: LambdaFunctionServiceRolePolicy
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/KdsLambda/LambdaFunctionServiceRole/Resource
+      guard:
+        SuppressedRules:
+        - IAM_NO_INLINE_POLICY_CHECK
+  KdsLambdaLambdaFunctionServiceRoleDefaultPolicy9058AC1A:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+          Effect: Allow
+          Resource: "*"
+        - Action:
+          - kinesis:DescribeStreamSummary
+          - kinesis:GetRecords
+          - kinesis:GetShardIterator
+          - kinesis:ListShards
+          - kinesis:SubscribeToShard
+          - kinesis:DescribeStream
+          - kinesis:ListStreams
+          - kinesis:DescribeStreamConsumer
+          Effect: Allow
+          Resource:
+            Fn::GetAtt:
+            - KdsDataStream4BCE778D
+            - Arn
+        - Action:
+          - sqs:SendMessage
+          - sqs:GetQueueAttributes
+          - sqs:GetQueueUrl
+          Effect: Allow
+          Resource:
+            Fn::GetAtt:
+            - KdsLambdaSqsDlqQueue332F9488
+            - Arn
+        - Action: kinesis:DescribeStream
+          Effect: Allow
+          Resource:
+            Fn::GetAtt:
+            - KdsDataStream4BCE778D
+            - Arn
+        Version: '2012-10-17'
+      PolicyName: KdsLambdaLambdaFunctionServiceRoleDefaultPolicy9058AC1A
+      Roles:
+      - Ref: KdsLambdaLambdaFunctionServiceRole0D5E8A79
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/KdsLambda/LambdaFunctionServiceRole/DefaultPolicy/Resource
+      cfn_nag:
+        rules_to_suppress:
+        - id: W12
+          reason: Lambda needs the following minimum required permissions to send
+            trace data to X-Ray and access ENIs in a VPC.
+  KdsLambdaLambdaFunctionD33F3887:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket:
+          Fn::Sub: solutions-${AWS::Region}
+        S3Key: streaming-data-solution-for-amazon-kinesis/v1.9.3/asset4bd02c38dc3da260b37ce43b07d912410004ee064b868685d6a00116654a9b12.zip
+      Environment:
+        Variables:
+          AWS_SDK_USER_AGENT: '{ "customUserAgent": "AwsSolution/SO0124/v1.9.3" }'
+      Handler: index.handler
+      Role:
+        Fn::GetAtt:
+        - KdsLambdaLambdaFunctionServiceRole0D5E8A79
+        - Arn
+      Runtime: nodejs20.x
+      Timeout: 300
+      TracingConfig:
+        Mode: Active
+    DependsOn:
+    - KdsLambdaLambdaFunctionServiceRoleDefaultPolicy9058AC1A
+    - KdsLambdaLambdaFunctionServiceRole0D5E8A79
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/KdsLambda/LambdaFunction/Resource
+      aws:asset:path: asset.4bd02c38dc3da260b37ce43b07d912410004ee064b868685d6a00116654a9b12
+      aws:asset:is-bundled: false
+      aws:asset:property: Code
+      cfn_nag:
+        rules_to_suppress:
+        - id: W58
+          reason: Lambda functions has the required permission to write CloudWatch
+            Logs. It uses custom policy instead of arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            with tighter permissions.
+        - id: W89
+          reason: This function does not need to be deployed in a VPC
+        - id: W92
+          reason: This function does not require reserved concurrency
+  KdsLambdaLambdaFunctionKinesisEventSourcestreamingdatasolutionforkinesisusingapigatewayandlambdaKdsDataStreamF317D7D3CCD03079:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize:
+        Ref: BatchSize
+      BisectBatchOnFunctionError: true
+      DestinationConfig:
+        OnFailure:
+          Destination:
+            Fn::GetAtt:
+            - KdsLambdaSqsDlqQueue332F9488
+            - Arn
+      EventSourceArn:
+        Fn::GetAtt:
+        - KdsDataStream4BCE778D
+        - Arn
+      FunctionName:
+        Ref: KdsLambdaLambdaFunctionD33F3887
+      MaximumRecordAgeInSeconds: 86400
+      MaximumRetryAttempts:
+        Ref: ParallelizationFactor
+      ParallelizationFactor:
+        Ref: MaxRetryAttempts
+      StartingPosition: LATEST
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/KdsLambda/LambdaFunction/KinesisEventSource:streamingdatasolutionforkinesisusingapigatewayandlambdaKdsDataStreamF317D7D3/Resource
+  KdsLambdaSqsDlqQueue332F9488:
+    Type: AWS::SQS::Queue
+    Properties:
+      KmsMasterKeyId: alias/aws/sqs
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/KdsLambda/SqsDlqQueue/Resource
+  KdsLambdaSqsDlqQueuePolicy061DA427:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action:
+          - sqs:DeleteMessage
+          - sqs:ReceiveMessage
+          - sqs:SendMessage
+          - sqs:GetQueueAttributes
+          - sqs:RemovePermission
+          - sqs:AddPermission
+          - sqs:SetQueueAttributes
+          Effect: Allow
+          Principal:
+            AWS:
+              Fn::Join:
+              - ''
+              - - 'arn:'
+                - Ref: AWS::Partition
+                - ":iam::"
+                - Ref: AWS::AccountId
+                - ":root"
+          Resource:
+            Fn::GetAtt:
+            - KdsLambdaSqsDlqQueue332F9488
+            - Arn
+          Sid: QueueOwnerOnlyAccess
+        - Action: SQS:*
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+          Effect: Deny
+          Principal:
+            AWS: "*"
+          Resource:
+            Fn::GetAtt:
+            - KdsLambdaSqsDlqQueue332F9488
+            - Arn
+          Sid: HttpsOnly
+        Version: '2012-10-17'
+      Queues:
+      - Ref: KdsLambdaSqsDlqQueue332F9488
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/KdsLambda/SqsDlqQueue/Policy/Resource
+  MonitoringDashboard0C3675C6:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardBody:
+        Fn::Join:
+        - ''
+        - - '{"widgets":[{"type":"text","width":24,"height":1,"x":0,"y":0,"properties":{"markdown":"\n#
+            Kinesis Data Stream Metrics\n"}},{"type":"metric","width":6,"height":6,"x":0,"y":1,"properties":{"view":"timeSeries","title":"Get
+            records iterator age (Milliseconds)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringIteratorAgeAlarm4CD9F9E1
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":6,"y":1,"properties":{"view":"timeSeries","title":"Read
+            throughput exceeded (Percent)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringReadProvisionedAlarmD758A818
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":12,"y":1,"properties":{"view":"timeSeries","title":"Write
+            throughput exceeded (Percent)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringWriteProvisionedAlarm10BA5F74
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":18,"y":1,"properties":{"view":"timeSeries","title":"Put
+            record success (Percent)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringPutRecordAlarm031B586D
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":0,"y":7,"properties":{"view":"timeSeries","title":"Put
+            records success (Percent)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringPutRecordsAlarm31F555DD
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":6,"y":7,"properties":{"view":"timeSeries","title":"Get
+            records success (Percent)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringGetRecordsAlarmD8EFE514
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"text","width":24,"height":1,"x":0,"y":13,"properties":{"markdown":"\n#
+            Lambda Metrics\n"}},{"type":"metric","width":6,"height":6,"x":0,"y":14,"properties":{"view":"timeSeries","title":"Invocations","region":"'
+          - Ref: AWS::Region
+          - '","metrics":[["AWS/Lambda","Invocations","FunctionName","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '","Resource","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '",{"period":60,"stat":"Sum"}]],"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":6,"y":14,"properties":{"view":"timeSeries","title":"Duration","region":"'
+          - Ref: AWS::Region
+          - '","metrics":[["AWS/Lambda","Duration","FunctionName","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '","Resource","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '",{"period":60,"stat":"Minimum"}],["AWS/Lambda","Duration","FunctionName","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '","Resource","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '",{"period":60}],["AWS/Lambda","Duration","FunctionName","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '","Resource","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '",{"period":60,"stat":"Maximum"}]],"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":12,"y":14,"properties":{"view":"timeSeries","title":"Error
+            count and success rate (%)","region":"'
+          - Ref: AWS::Region
+          - '","metrics":[["AWS/Lambda","Errors","FunctionName","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '","Resource","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '",{"color":"#d62728","period":60,"stat":"Maximum","id":"errors"}],[{"label":"Success
+            rate (%)","color":"#2ca02c","expression":"100 - 100 * errors / MAX([errors,
+            invocations])","period":60,"yAxis":"right"}],["AWS/Lambda","Invocations","FunctionName","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '","Resource","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '",{"label":"","period":60,"stat":"Sum","visible":false,"id":"invocations"}]],"yAxis":{"right":{"max":100}}}},{"type":"metric","width":6,"height":6,"x":18,"y":14,"properties":{"view":"timeSeries","title":"Throttles","region":"'
+          - Ref: AWS::Region
+          - '","metrics":[["AWS/Lambda","Throttles","FunctionName","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '","Resource","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '",{"period":60,"stat":"Sum"}]],"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":0,"y":20,"properties":{"view":"timeSeries","title":"IteratorAge","region":"'
+          - Ref: AWS::Region
+          - '","metrics":[["AWS/Lambda","IteratorAge","FunctionName","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '","Resource","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '",{"period":60,"stat":"Maximum"}]],"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":6,"y":20,"properties":{"view":"timeSeries","title":"Concurrent
+            executions","region":"'
+          - Ref: AWS::Region
+          - '","metrics":[["AWS/Lambda","ConcurrentExecutions","FunctionName","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '","Resource","'
+          - Ref: KdsLambdaLambdaFunctionD33F3887
+          - '",{"period":60,"stat":"Maximum"}]],"yAxis":{}}}]}'
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/Monitoring/Dashboard/Resource
+  MonitoringIteratorAgeAlarm4CD9F9E1:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: StreamName
+        Value:
+          Ref: KdsDataStream4BCE778D
+      EvaluationPeriods: 1
+      MetricName: GetRecords.IteratorAgeMilliseconds
+      Namespace: AWS/Kinesis
+      Period: 60
+      Statistic: Maximum
+      Threshold: 60000
+      TreatMissingData: breaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/Monitoring/IteratorAgeAlarm/Resource
+  MonitoringReadProvisionedAlarmD758A818:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: StreamName
+        Value:
+          Ref: KdsDataStream4BCE778D
+      EvaluationPeriods: 1
+      MetricName: ReadProvisionedThroughputExceeded
+      Namespace: AWS/Kinesis
+      Period: 60
+      Statistic: Average
+      Threshold: 0.01
+      TreatMissingData: breaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/Monitoring/ReadProvisionedAlarm/Resource
+  MonitoringWriteProvisionedAlarm10BA5F74:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: StreamName
+        Value:
+          Ref: KdsDataStream4BCE778D
+      EvaluationPeriods: 1
+      MetricName: WriteProvisionedThroughputExceeded
+      Namespace: AWS/Kinesis
+      Period: 60
+      Statistic: Average
+      Threshold: 0.01
+      TreatMissingData: breaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/Monitoring/WriteProvisionedAlarm/Resource
+  MonitoringPutRecordAlarm031B586D:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: LessThanOrEqualToThreshold
+      Dimensions:
+      - Name: StreamName
+        Value:
+          Ref: KdsDataStream4BCE778D
+      EvaluationPeriods: 1
+      MetricName: PutRecord.Success
+      Namespace: AWS/Kinesis
+      Period: 60
+      Statistic: Average
+      Threshold: 0.95
+      TreatMissingData: notBreaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/Monitoring/PutRecordAlarm/Resource
+  MonitoringPutRecordsAlarm31F555DD:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: LessThanOrEqualToThreshold
+      Dimensions:
+      - Name: StreamName
+        Value:
+          Ref: KdsDataStream4BCE778D
+      EvaluationPeriods: 1
+      MetricName: PutRecords.Success
+      Namespace: AWS/Kinesis
+      Period: 60
+      Statistic: Average
+      Threshold: 0.95
+      TreatMissingData: notBreaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/Monitoring/PutRecordsAlarm/Resource
+  MonitoringGetRecordsAlarmD8EFE514:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: LessThanOrEqualToThreshold
+      Dimensions:
+      - Name: StreamName
+        Value:
+          Ref: KdsDataStream4BCE778D
+      EvaluationPeriods: 1
+      MetricName: GetRecords.Success
+      Namespace: AWS/Kinesis
+      Period: 60
+      Statistic: Average
+      Threshold: 0.98
+      TreatMissingData: breaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/Monitoring/GetRecordsAlarm/Resource
+  SolutionHelperRoleC017C62A:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource:
+              Fn::Join:
+              - ''
+              - - 'arn:'
+                - Ref: AWS::Partition
+                - ":logs:"
+                - Ref: AWS::Region
+                - ":"
+                - Ref: AWS::AccountId
+                - ":log-group:/aws/lambda/*"
+          Version: '2012-10-17'
+        PolicyName: CloudWatchLogsPolicy
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/SolutionHelper/Role/Role/Resource
+      guard:
+        SuppressedRules:
+        - IAM_NO_INLINE_POLICY_CHECK
+  SolutionHelper4825923B:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket:
+          Fn::Sub: solutions-${AWS::Region}
+        S3Key: streaming-data-solution-for-amazon-kinesis/v1.9.3/assetf2e3530fe7687e60ce1542d3567b9775909ff357d1a6781858ebe1a5fe88ed0d.zip
+      Description: This function generates UUID for each deployment and sends anonymous
+        data to the AWS Solutions team
+      Environment:
+        Variables:
+          AWS_SDK_USER_AGENT: '{ "user_agent_extra": "AwsSolution/SO0124/v1.9.3" }'
+      Handler: lambda_function.handler
+      Role:
+        Fn::GetAtt:
+        - SolutionHelperRoleC017C62A
+        - Arn
+      Runtime: python3.12
+      Timeout: 30
+    DependsOn:
+    - SolutionHelperRoleC017C62A
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/SolutionHelper/SolutionHelper/Resource
+      aws:asset:path: asset.f2e3530fe7687e60ce1542d3567b9775909ff357d1a6781858ebe1a5fe88ed0d
+      aws:asset:is-bundled: false
+      aws:asset:property: Code
+      cfn_nag:
+        rules_to_suppress:
+        - id: W89
+          reason: This function does not need to be deployed in a VPC
+        - id: W92
+          reason: This function does not require reserved concurrency
+    Condition: SolutionHelperAnonymousDatatoAWSD898118F
+  SolutionHelperCreateUniqueIDAF03406A:
+    Type: Custom::CreateUUID
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+        - SolutionHelper4825923B
+        - Arn
+      Resource: UUID
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/SolutionHelper/CreateUniqueID/Default
+    Condition: SolutionHelperAnonymousDatatoAWSD898118F
+  SolutionHelperSendAnonymousData9B19E31D:
+    Type: Custom::AnonymousData
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+        - SolutionHelper4825923B
+        - Arn
+      Resource: AnonymousMetric
+      UUID:
+        Fn::GetAtt:
+        - SolutionHelperCreateUniqueIDAF03406A
+        - UUID
+      Region:
+        Ref: AWS::Region
+      SolutionId: SO0124
+      Version: v1.9.3
+      Pattern: ApiGwKdsLambda
+      ShardCount:
+        Ref: ShardCount
+      RetentionHours:
+        Ref: RetentionHours
+      EnhancedMonitoring:
+        Ref: EnableEnhancedMonitoring
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/SolutionHelper/SendAnonymousData/Default
+    Condition: SolutionHelperAnonymousDatatoAWSD898118F
+  ? AppRegistryd0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37dAppRegistrySetupAppRegistryd0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37dA5E8016F
+  : Type: AWS::ServiceCatalogAppRegistry::Application
+    Properties:
+      Description: Service Catalog application to track and manage all your resources
+        for the solution streaming-data-solution-for-amazon-kinesis
+      Name:
+        Fn::Join:
+        - "-"
+        - - App
+          - Ref: AWS::StackName
+          - sds-amazon-kinesis
+      Tags:
+        Solutions:ApplicationType: AWS-Solutions
+        Solutions:SolutionID: SO0124
+        Solutions:SolutionName: streaming-data-solution-for-amazon-kinesis
+        Solutions:SolutionVersion: v1.9.3
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/AppRegistry-d0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37d/AppRegistrySetup-AppRegistry-d0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37d/Resource
+  ? AppRegistryd0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37dAppRegistrySetupAppRegistryd0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37dAttributeGroupAssociationb8e9735fe543E9297976
+  : Type: AWS::ServiceCatalogAppRegistry::AttributeGroupAssociation
+    Properties:
+      Application:
+        Fn::GetAtt:
+        - AppRegistryd0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37dAppRegistrySetupAppRegistryd0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37dA5E8016F
+        - Id
+      AttributeGroup:
+        Fn::GetAtt:
+        - AppRegistryd0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37dApplicationAttributesBBA08C3A
+        - Id
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/AppRegistry-d0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37d/AppRegistrySetup-AppRegistry-d0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37d/AttributeGroupAssociationb8e9735fe543
+  AppRegistryd0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37dApplicationAttributesBBA08C3A:
+    Type: AWS::ServiceCatalogAppRegistry::AttributeGroup
+    Properties:
+      Attributes:
+        applicationType: AWS-Solutions
+        version: v1.9.3
+        solutionID: SO0124
+        solutionName: streaming-data-solution-for-amazon-kinesis
+      Description: Attributes for Solutions Metadata
+      Name:
+        Fn::Join:
+        - ''
+        - - AttrGrp-
+          - Ref: AWS::StackName
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/AppRegistry-d0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37d/ApplicationAttributes/Resource
+  AppRegistryAssociation:
+    Type: AWS::ServiceCatalogAppRegistry::ResourceAssociation
+    Properties:
+      Application:
+        Fn::GetAtt:
+        - AppRegistryd0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37dAppRegistrySetupAppRegistryd0245bdb12e27e58ceb9cd0bb51dde416df2dec029bee4f49926fddab3adc37dA5E8016F
+        - Id
+      Resource:
+        Ref: AWS::StackId
+      ResourceType: CFN_STACK
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/AppRegistryAssociation
+  CDKMetadata:
+    Type: AWS::CDK::Metadata
+    Properties:
+      Analytics: v2:deflate64:H4sIAAAAAAAA/3VTTVPbMBD9LdxlkQR6rwkth8I0DdArs5EXR0TWGq2UTOrxf+9IsoOh5eJ9u2+92s+F7OaLuZydwYELVe0Kozeyu/egdmL5bFfgoEGPTsCBn7qdtsiao4NDaKJHRr3Q0MhuTQajMckVGa2OKUpCvTDQbCqQ3fdglddkI3fC3/Zo/T0Fp/AO2lbbOtL/WnvBF0/AjJ5lGYXgC3kV1A79FTAKRbXVnmT3yOhWRCaGOeERLI1G66dUtvQCWl2DxwMcZbfMsUYXLoPfktN/0MU/J9oa2ZetTrUP8BpbQ8dmeGWi3XuoMbcugjVyKi8lPypDoIzv0G+piqYBPTLUuDJgc/6jssbXgOx/g9EVeHI5yAfbHVWYWnICpVIUYuWGapbdLdU3jkIbqRH3QhkK1QG82squNODS7DO4Bt5uCFzK8KT0gl9Zdr8ChlRNBun7thgTtReMbq8VKvBgqIa2dVhr9i7O4dmWbWu0gnFtSu+d3gSPKb+SmZT+hJz2cuLY92/dTnsUx5G2LrCn5r+TWD7bn8G3IY10sqVLspVOQcXlFzk7+xqvicmEaONCkWXvgvJ8HonubcWK4aI4XRHLstU3mXmgH5nKB8bivWcx3NJ7pwe6TeZezGcLOSvAtFsY81HVLj3/aZ8H927a6vet7HthqUL5wuf7xUzOL+Xs7IW1LlywXjco11n+BRQKrYNWBAAA
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-api-gateway-and-lambda/CDKMetadata/Default
+    Condition: CDKMetadataAvailable
+Outputs:
+  ApiGwKdsRestApiEndpoint9AF8D033:
+    Value:
+      Fn::Join:
+      - ''
+      - - https://
+        - Ref: ApiGwKdsRestApi29A93B97
+        - ".execute-api."
+        - Ref: AWS::Region
+        - "."
+        - Ref: AWS::URLSuffix
+        - "/"
+        - Ref: ApiGwKdsRestApiDeploymentStageprod454BD4B8
+        - "/"
+  UserPoolId:
+    Description: ID of the Amazon Cognito user pool
+    Value:
+      Ref: ApiUserPool7811AFAD
+  UserPoolClientId:
+    Description: ID of the Amazon Cognito user pool client
+    Value:
+      Ref: ApiUserPoolClient534B7097
+  ProxyApiId:
+    Description: ID of the proxy API
+    Value:
+      Ref: ApiGwKdsRestApi29A93B97
+  ProxyApiEndpoint:
+    Description: Deployed URL of the proxy API
+    Value:
+      Fn::Join:
+      - ''
+      - - https://
+        - Ref: ApiGwKdsRestApi29A93B97
+        - ".execute-api."
+        - Ref: AWS::Region
+        - "."
+        - Ref: AWS::URLSuffix
+        - "/"
+        - Ref: ApiGwKdsRestApiDeploymentStageprod454BD4B8
+        - "/"
+  DataStreamName:
+    Description: Name of the Amazon Kinesis Data stream
+    Value:
+      Ref: KdsDataStream4BCE778D
+  LambdaConsumerArn:
+    Description: ARN of the AWS Lambda function
+    Value:
+      Fn::GetAtt:
+      - KdsLambdaLambdaFunctionD33F3887
+      - Arn
+Mappings:
+  SolutionHelperAnonymousData14B64A81:
+    SendAnonymousData:
+      Data: 'Yes'
+Conditions:
+  SolutionHelperAnonymousDatatoAWSD898118F:
+    Fn::Equals:
+    - Fn::FindInMap:
+      - SolutionHelperAnonymousData14B64A81
+      - SendAnonymousData
+      - Data
+    - 'Yes'
+  CDKMetadataAvailable:
+    Fn::Or:
+    - Fn::Or:
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - af-south-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ap-east-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ap-northeast-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ap-northeast-2
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ap-south-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ap-southeast-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ap-southeast-2
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ca-central-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - cn-north-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - cn-northwest-1
+    - Fn::Or:
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - eu-central-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - eu-north-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - eu-south-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - eu-west-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - eu-west-2
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - eu-west-3
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - il-central-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - me-central-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - me-south-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - sa-east-1
+    - Fn::Or:
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - us-east-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - us-east-2
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - us-west-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - us-west-2

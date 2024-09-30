@@ -1,0 +1,6 @@
+
+
+
+
+class StockTradesProcessor:
+    pass

@@ -1,0 +1,58 @@
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  Setup infrastructure for stream processing with 
+  Amazon Kinesis workshop on Amazon Web Services (AWS).
+
+
+Parameters:
+  BucketName:
+    Type: String
+    Default: google-trends-searching
+
+  FunctionName:
+    Type: String
+    Default: trends-lambda-stream
+
+  Runtime:
+    Type: String
+    Default: python3.12
+    AllowedValues:
+      - java21
+      - python3.12
+      - nodejs20.x
+      - ruby3.3
+      - dotnet8
+      - provided.al2023
+
+  Architectures:
+    Type: CommaDelimitedList
+    Default: x86_64
+    AllowedValues:
+      - x86_64
+      - arm64
+
+Resources:
+  ## Amazon S3
+  s3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Ref BucketName
+
+  ## Amazon Lambda
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref FunctionName
+      Runtime: !Ref Runtime
+      Architectures: !Ref Architectures
+      Code:
+        S3Bucket: 
+        S3Key: google-trends-searching/function/
+          
+      Role: 

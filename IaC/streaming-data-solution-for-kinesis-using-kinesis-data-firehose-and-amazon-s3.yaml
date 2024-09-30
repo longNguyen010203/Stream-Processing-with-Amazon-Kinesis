@@ -1,0 +1,1120 @@
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "(SO0124) - Streaming Data Solution for Amazon Kinesis (KDS -> KDF ->
+  S3). Version v1.9.3"
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Amazon Kinesis Data Streams configuration
+      Parameters:
+      - ShardCount
+      - RetentionHours
+      - EnableEnhancedMonitoring
+    - Label:
+        default: Amazon Kinesis Data Firehose configuration
+      Parameters:
+      - BufferingSize
+      - BufferingInterval
+      - CompressionFormat
+      - DataPrefix
+      - ErrorsPrefix
+    - Label:
+        default: Dynamic partitioning configuration
+      Parameters:
+      - DynamicPartitioning
+      - NewLineDelimiter
+      - JqExpression
+      - RetryDurationSec
+    ParameterLabels:
+      ShardCount:
+        default: Number of open shards
+      RetentionHours:
+        default: Data retention period (hours)
+      EnableEnhancedMonitoring:
+        default: Enable enhanced (shard-level) metrics
+      BufferingSize:
+        default: Size of the buffer (in MBs) that incoming data is buffered before
+          delivery (if dynamic partitioning is enabled, this value must be between
+          64 MiB and 128 MiB)
+      BufferingInterval:
+        default: Length of time (in seconds) that incoming data is buffered before
+          delivery
+      CompressionFormat:
+        default: Compression format for delivered data in Amazon S3
+      DataPrefix:
+        default: Prefix to be appended to the data delivered to Amazon S3 (if dynamic
+          partitioning is enabled, you can specify the "partitionKeyFromQuery" namespace
+          as well)
+      ErrorsPrefix:
+        default: Prefix to be used for errors when delivering data (if dynamic partitioning
+          is enabled, this parameter is required)
+      DynamicPartitioning:
+        default: Whether data on Amazon S3 will be partitioned (once enabled, dynamic
+          partitioning cannot be disabled)
+      NewLineDelimiter:
+        default: Whether to add a new line delimiter between records
+      JqExpression:
+        default: 'JQ expression (for example, "{ ticker: .ticker }")'
+      RetryDurationSec:
+        default: Total amount of time (in seconds) that should be spent on retries
+  cdk_nag:
+    rules_to_suppress:
+    - reason: IAM role requires more permissions
+      id: AwsSolutions-IAM5
+Parameters:
+  ShardCount:
+    Type: Number
+    Default: 2
+    MaxValue: 200
+    MinValue: 1
+  RetentionHours:
+    Type: Number
+    Default: 24
+    MaxValue: 8760
+    MinValue: 24
+  EnableEnhancedMonitoring:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+    - 'true'
+    - 'false'
+  BufferingSize:
+    Type: Number
+    Default: 5
+    MaxValue: 128
+    MinValue: 1
+  BufferingInterval:
+    Type: Number
+    Default: 300
+    MaxValue: 900
+    MinValue: 60
+  CompressionFormat:
+    Type: String
+    Default: GZIP
+    AllowedValues:
+    - GZIP
+    - HADOOP_SNAPPY
+    - Snappy
+    - UNCOMPRESSED
+    - ZIP
+  DataPrefix:
+    Type: String
+    Default: data/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/hour=!{timestamp:HH}/
+    MaxLength: 1024
+    MinLength: 0
+  ErrorsPrefix:
+    Type: String
+    Default: errors/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/hour=!{timestamp:HH}/!{firehose:error-output-type}
+    MaxLength: 1024
+    MinLength: 0
+  DynamicPartitioning:
+    Type: String
+    Default: Disabled
+    AllowedValues:
+    - Enabled
+    - Disabled
+  NewLineDelimiter:
+    Type: String
+    Default: Disabled
+    AllowedValues:
+    - Enabled
+    - Disabled
+  JqExpression:
+    Type: String
+    MaxLength: 4096
+  RetryDurationSec:
+    Type: Number
+    Default: 300
+    MaxValue: 7200
+    MinValue: 0
+Resources:
+  KdsDataStream4BCE778D:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      RetentionPeriodHours:
+        Ref: RetentionHours
+      ShardCount:
+        Ref: ShardCount
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: alias/aws/kinesis
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Kds/DataStream/Resource
+  KdsRole44D602FE:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource:
+              Fn::Join:
+              - ''
+              - - 'arn:'
+                - Ref: AWS::Partition
+                - ":logs:"
+                - Ref: AWS::Region
+                - ":"
+                - Ref: AWS::AccountId
+                - ":log-group:/aws/lambda/*"
+          Version: '2012-10-17'
+        PolicyName: CloudWatchLogsPolicy
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - kinesis:EnableEnhancedMonitoring
+            - kinesis:DisableEnhancedMonitoring
+            Effect: Allow
+            Resource: "*"
+          Version: '2012-10-17'
+        PolicyName: MonitoringPolicy
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Kds/Role/Role/Resource
+      guard:
+        SuppressedRules:
+        - IAM_NO_INLINE_POLICY_CHECK
+      cfn_nag:
+        rules_to_suppress:
+        - id: W11
+          reason: Kinesis enhanced monitoring actions do not support resource level
+            permissions
+  KdsCustomResource9D8AB3E8:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket:
+          Fn::Sub: solutions-${AWS::Region}
+        S3Key: streaming-data-solution-for-amazon-kinesis/v1.9.3/assetc3c86cc19629c2a8d9772fd5ad57a08996a7243616c6396092c9df7c00842c5a.zip
+      Environment:
+        Variables:
+          AWS_SDK_USER_AGENT: '{ "user_agent_extra": "AwsSolution/SO0124/v1.9.3" }'
+      Handler: lambda_function.handler
+      Role:
+        Fn::GetAtt:
+        - KdsRole44D602FE
+        - Arn
+      Runtime: python3.12
+      Timeout: 30
+    DependsOn:
+    - KdsRole44D602FE
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Kds/CustomResource/Resource
+      aws:asset:path: asset.c3c86cc19629c2a8d9772fd5ad57a08996a7243616c6396092c9df7c00842c5a
+      aws:asset:is-bundled: false
+      aws:asset:property: Code
+      cfn_nag:
+        rules_to_suppress:
+        - id: W89
+          reason: This function does not need to be deployed in a VPC
+        - id: W92
+          reason: This function does not require reserved concurrency
+  KdsEnhancedMonitoringF4495F43:
+    Type: Custom::EnhancedMonitoring
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+        - KdsCustomResource9D8AB3E8
+        - Arn
+      EnableEnhancedMonitoring:
+        Ref: EnableEnhancedMonitoring
+      StreamName:
+        Ref: KdsDataStream4BCE778D
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Kds/EnhancedMonitoring/Default
+  KdfRole24613677:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: firehose.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - kinesis:DescribeStream
+            - kinesis:DescribeStreamSummary
+            - kinesis:GetShardIterator
+            - kinesis:GetRecords
+            - kinesis:ListShards
+            - kinesis:SubscribeToShard
+            Effect: Allow
+            Resource:
+              Fn::GetAtt:
+              - KdsDataStream4BCE778D
+              - Arn
+          Version: '2012-10-17'
+        PolicyName: ReadSource
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Kdf/Role/Resource
+      guard:
+        SuppressedRules:
+        - IAM_NO_INLINE_POLICY_CHECK
+  KdfRoleDefaultPolicy73B7B628:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action:
+          - s3:DeleteObject*
+          - s3:PutObject
+          - s3:PutObjectLegalHold
+          - s3:PutObjectRetention
+          - s3:PutObjectTagging
+          - s3:PutObjectVersionTagging
+          - s3:Abort*
+          Effect: Allow
+          Resource:
+          - Fn::GetAtt:
+            - KdfOutputBucket89D2E122
+            - Arn
+          - Fn::Join:
+            - ''
+            - - Fn::GetAtt:
+                - KdfOutputBucket89D2E122
+                - Arn
+              - "/*"
+        Version: '2012-10-17'
+      PolicyName: KdfRoleDefaultPolicy73B7B628
+      Roles:
+      - Ref: KdfRole24613677
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Kdf/Role/DefaultPolicy/Resource
+  KdfOutputAccessLogsBucket0DF29BDA:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Kdf/Output/AccessLogsBucket/Resource
+      cfn_nag:
+        rules_to_suppress:
+        - id: W35
+          reason: This bucket is used to store access logs for another bucket
+      guard:
+        SuppressedRules:
+        - S3_BUCKET_NO_PUBLIC_RW_ACL
+  KdfOutputAccessLogsBucketPolicy34C8B258:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: KdfOutputAccessLogsBucket0DF29BDA
+      PolicyDocument:
+        Statement:
+        - Action: s3:*
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+          Effect: Deny
+          Principal:
+            AWS: "*"
+          Resource:
+          - Fn::GetAtt:
+            - KdfOutputAccessLogsBucket0DF29BDA
+            - Arn
+          - Fn::Join:
+            - ''
+            - - Fn::GetAtt:
+                - KdfOutputAccessLogsBucket0DF29BDA
+                - Arn
+              - "/*"
+        - Action: s3:PutObject
+          Condition:
+            ArnLike:
+              aws:SourceArn:
+                Fn::GetAtt:
+                - KdfOutputBucket89D2E122
+                - Arn
+            StringEquals:
+              aws:SourceAccount:
+                Ref: AWS::AccountId
+          Effect: Allow
+          Principal:
+            Service: logging.s3.amazonaws.com
+          Resource:
+            Fn::Join:
+            - ''
+            - - Fn::GetAtt:
+                - KdfOutputAccessLogsBucket0DF29BDA
+                - Arn
+              - "/*"
+        - Action: s3:PutObject
+          Condition:
+            ArnLike:
+              aws:SourceArn:
+              - Fn::GetAtt:
+                - KdfOutputBucket89D2E122
+                - Arn
+            StringEquals:
+              aws:SourceAccount:
+                Ref: AWS::AccountId
+          Effect: Allow
+          Principal:
+            Service: logging.s3.amazonaws.com
+          Resource:
+            Fn::Join:
+            - ''
+            - - Fn::GetAtt:
+                - KdfOutputAccessLogsBucket0DF29BDA
+                - Arn
+              - "/*"
+          Sid: S3ServerAccessLogsPolicy
+        Version: '2012-10-17'
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Kdf/Output/AccessLogsBucket/Policy/Resource
+  KdfOutputBucket89D2E122:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+        - AbortIncompleteMultipartUpload:
+            DaysAfterInitiation: 7
+          Id: multipart-upload-rule
+          Status: Enabled
+        - Id: intelligent-tiering-rule
+          Status: Enabled
+          Transitions:
+          - StorageClass: INTELLIGENT_TIERING
+            TransitionInDays: 1
+      LoggingConfiguration:
+        DestinationBucketName:
+          Ref: KdfOutputAccessLogsBucket0DF29BDA
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Kdf/Output/Bucket/Resource
+      guard:
+        SuppressedRules:
+        - S3_BUCKET_NO_PUBLIC_RW_ACL
+  KdfOutputBucketPolicy7BEE57FF:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: KdfOutputBucket89D2E122
+      PolicyDocument:
+        Statement:
+        - Action: s3:*
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+          Effect: Deny
+          Principal:
+            AWS: "*"
+          Resource:
+          - Fn::GetAtt:
+            - KdfOutputBucket89D2E122
+            - Arn
+          - Fn::Join:
+            - ''
+            - - Fn::GetAtt:
+                - KdfOutputBucket89D2E122
+                - Arn
+              - "/*"
+        Version: '2012-10-17'
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Kdf/Output/Bucket/Policy/Resource
+  KdfDeliveryStreamWithoutDP7F328E8D:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamType: KinesisStreamAsSource
+      ExtendedS3DestinationConfiguration:
+        BucketARN:
+          Fn::GetAtt:
+          - KdfOutputBucket89D2E122
+          - Arn
+        BufferingHints:
+          IntervalInSeconds:
+            Ref: BufferingInterval
+          SizeInMBs:
+            Ref: BufferingSize
+        CompressionFormat:
+          Ref: CompressionFormat
+        ErrorOutputPrefix:
+          Ref: ErrorsPrefix
+        Prefix:
+          Ref: DataPrefix
+        RoleARN:
+          Fn::GetAtt:
+          - KdfRole24613677
+          - Arn
+      KinesisStreamSourceConfiguration:
+        KinesisStreamARN:
+          Fn::GetAtt:
+          - KdsDataStream4BCE778D
+          - Arn
+        RoleARN:
+          Fn::GetAtt:
+          - KdfRole24613677
+          - Arn
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Kdf/DeliveryStreamWithoutDP
+      guard:
+        SuppressedRules:
+        - KINESIS_FIREHOSE_REDSHIFT_DESTINATION_CONFIGURATION_NO_PLAINTEXT_PASSWORD
+        - KINESIS_FIREHOSE_SPLUNK_DESTINATION_CONFIGURATION_NO_PLAINTEXT_PASSWORD
+      cdk_nag:
+        rules_to_suppress:
+        - reason: 'Server-Side Encryption isn''t supported on deliveryStreamType:
+            KinesisStreamAsSource'
+          id: AwsSolutions-KDF1
+    Condition: KdfDynamicPartitioningDisabledA489FB59
+  KdfDeliveryStreamWithDPFB4C9017:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamType: KinesisStreamAsSource
+      ExtendedS3DestinationConfiguration:
+        BucketARN:
+          Fn::GetAtt:
+          - KdfOutputBucket89D2E122
+          - Arn
+        BufferingHints:
+          IntervalInSeconds:
+            Ref: BufferingInterval
+          SizeInMBs:
+            Ref: BufferingSize
+        CompressionFormat:
+          Ref: CompressionFormat
+        DynamicPartitioningConfiguration:
+          Enabled: true
+          RetryOptions:
+            DurationInSeconds:
+              Ref: RetryDurationSec
+        ErrorOutputPrefix:
+          Ref: ErrorsPrefix
+        Prefix:
+          Ref: DataPrefix
+        ProcessingConfiguration:
+          Enabled: true
+          Processors:
+          - Parameters:
+            - ParameterName: MetadataExtractionQuery
+              ParameterValue:
+                Ref: JqExpression
+            - ParameterName: JsonParsingEngine
+              ParameterValue: JQ-1.6
+            Type: MetadataExtraction
+          - Parameters:
+            - ParameterName: Delimiter
+              ParameterValue:
+                Fn::If:
+                - KdfNewLineDelimiter1D177307
+                - "\\n"
+                - ''
+            Type: AppendDelimiterToRecord
+        RoleARN:
+          Fn::GetAtt:
+          - KdfRole24613677
+          - Arn
+      KinesisStreamSourceConfiguration:
+        KinesisStreamARN:
+          Fn::GetAtt:
+          - KdsDataStream4BCE778D
+          - Arn
+        RoleARN:
+          Fn::GetAtt:
+          - KdfRole24613677
+          - Arn
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Kdf/DeliveryStreamWithDP
+      guard:
+        SuppressedRules:
+        - KINESIS_FIREHOSE_REDSHIFT_DESTINATION_CONFIGURATION_NO_PLAINTEXT_PASSWORD
+        - KINESIS_FIREHOSE_SPLUNK_DESTINATION_CONFIGURATION_NO_PLAINTEXT_PASSWORD
+      cdk_nag:
+        rules_to_suppress:
+        - reason: 'Server-Side Encryption isn''t supported on deliveryStreamType:
+            KinesisStreamAsSource'
+          id: AwsSolutions-KDF1
+    Condition: KdfDynamicPartitioningEnabledD334A2F5
+  MonitoringDashboard0C3675C6:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardBody:
+        Fn::Join:
+        - ''
+        - - '{"widgets":[{"type":"text","width":24,"height":1,"x":0,"y":0,"properties":{"markdown":"\n#
+            Kinesis Data Stream Metrics\n"}},{"type":"metric","width":6,"height":6,"x":0,"y":1,"properties":{"view":"timeSeries","title":"Get
+            records iterator age (Milliseconds)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringIteratorAgeAlarm4CD9F9E1
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":6,"y":1,"properties":{"view":"timeSeries","title":"Read
+            throughput exceeded (Percent)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringReadProvisionedAlarmD758A818
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":12,"y":1,"properties":{"view":"timeSeries","title":"Write
+            throughput exceeded (Percent)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringWriteProvisionedAlarm10BA5F74
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":18,"y":1,"properties":{"view":"timeSeries","title":"Put
+            record success (Percent)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringPutRecordAlarm031B586D
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":0,"y":7,"properties":{"view":"timeSeries","title":"Put
+            records success (Percent)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringPutRecordsAlarm31F555DD
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":6,"y":7,"properties":{"view":"timeSeries","title":"Get
+            records success (Percent)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringGetRecordsAlarmD8EFE514
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"text","width":24,"height":1,"x":0,"y":13,"properties":{"markdown":"\n#
+            Kinesis Data Firehose Metrics\n"}},{"type":"metric","width":6,"height":6,"x":0,"y":14,"properties":{"view":"timeSeries","title":"Records
+            read from Kinesis Data Streams (Sum)","region":"'
+          - Ref: AWS::Region
+          - '","metrics":[["AWS/Firehose","DataReadFromKinesisStream.Records","DeliveryStreamName","'
+          - Fn::If:
+            - KdfDynamicPartitioningEnabledD334A2F5
+            - Fn::GetAtt:
+              - KdfDeliveryStreamWithDPFB4C9017
+              - Arn
+            - Fn::GetAtt:
+              - KdfDeliveryStreamWithoutDP7F328E8D
+              - Arn
+          - '",{"stat":"Sum"}]],"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":6,"y":14,"properties":{"view":"timeSeries","title":"Bytes
+            read from Kinesis Data Streams (Sum)","region":"'
+          - Ref: AWS::Region
+          - '","metrics":[["AWS/Firehose","DataReadFromKinesisStream.Bytes","DeliveryStreamName","'
+          - Fn::If:
+            - KdfDynamicPartitioningEnabledD334A2F5
+            - Fn::GetAtt:
+              - KdfDeliveryStreamWithDPFB4C9017
+              - Arn
+            - Fn::GetAtt:
+              - KdfDeliveryStreamWithoutDP7F328E8D
+              - Arn
+          - '",{"stat":"Sum"}]],"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":12,"y":14,"properties":{"view":"timeSeries","title":"GetRecords
+            operations throttled (Average)","region":"'
+          - Ref: AWS::Region
+          - '","metrics":[["AWS/Firehose","ThrottledGetRecords","DeliveryStreamName","'
+          - Fn::If:
+            - KdfDynamicPartitioningEnabledD334A2F5
+            - Fn::GetAtt:
+              - KdfDeliveryStreamWithDPFB4C9017
+              - Arn
+            - Fn::GetAtt:
+              - KdfDeliveryStreamWithoutDP7F328E8D
+              - Arn
+          - '"]],"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":0,"y":20,"properties":{"view":"timeSeries","title":"Delivery
+            to Amazon S3 success","region":"'
+          - Ref: AWS::Region
+          - '","metrics":[[{"label":"DeliveryToS3.Success","expression":"METRICS(\"m1\")
+            * 100"}],["AWS/Firehose","DeliveryToS3.Success","DeliveryStreamName","'
+          - Fn::If:
+            - KdfDynamicPartitioningEnabledD334A2F5
+            - Fn::GetAtt:
+              - KdfDeliveryStreamWithDPFB4C9017
+              - Arn
+            - Fn::GetAtt:
+              - KdfDeliveryStreamWithoutDP7F328E8D
+              - Arn
+          - '",{"label":"","visible":false,"id":"m1"}]],"yAxis":{"left":{"showUnits":false,"label":"Percentage","min":0,"max":100}}}},{"type":"metric","width":6,"height":6,"x":6,"y":20,"properties":{"view":"timeSeries","title":"Delivery
+            to Amazon S3 data freshness (Maximum)","region":"'
+          - Ref: AWS::Region
+          - '","annotations":{"alarms":["'
+          - Fn::GetAtt:
+            - MonitoringDataFreshnessAlarmF0FD627B
+            - Arn
+          - '"]},"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":12,"y":20,"properties":{"view":"timeSeries","title":"Records
+            delivered to Amazon S3 (Sum)","region":"'
+          - Ref: AWS::Region
+          - '","metrics":[["AWS/Firehose","DeliveryToS3.Records","DeliveryStreamName","'
+          - Fn::If:
+            - KdfDynamicPartitioningEnabledD334A2F5
+            - Fn::GetAtt:
+              - KdfDeliveryStreamWithDPFB4C9017
+              - Arn
+            - Fn::GetAtt:
+              - KdfDeliveryStreamWithoutDP7F328E8D
+              - Arn
+          - '",{"stat":"Sum"}]],"yAxis":{}}},{"type":"metric","width":6,"height":6,"x":18,"y":20,"properties":{"view":"timeSeries","title":"Bytes
+            delivered to Amazon S3 (Sum)","region":"'
+          - Ref: AWS::Region
+          - '","metrics":[["AWS/Firehose","DeliveryToS3.Bytes","DeliveryStreamName","'
+          - Fn::If:
+            - KdfDynamicPartitioningEnabledD334A2F5
+            - Fn::GetAtt:
+              - KdfDeliveryStreamWithDPFB4C9017
+              - Arn
+            - Fn::GetAtt:
+              - KdfDeliveryStreamWithoutDP7F328E8D
+              - Arn
+          - '",{"stat":"Sum"}]],"yAxis":{}}}]}'
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Monitoring/Dashboard/Resource
+  MonitoringIteratorAgeAlarm4CD9F9E1:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: StreamName
+        Value:
+          Ref: KdsDataStream4BCE778D
+      EvaluationPeriods: 1
+      MetricName: GetRecords.IteratorAgeMilliseconds
+      Namespace: AWS/Kinesis
+      Period: 60
+      Statistic: Maximum
+      Threshold: 60000
+      TreatMissingData: breaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Monitoring/IteratorAgeAlarm/Resource
+  MonitoringReadProvisionedAlarmD758A818:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: StreamName
+        Value:
+          Ref: KdsDataStream4BCE778D
+      EvaluationPeriods: 1
+      MetricName: ReadProvisionedThroughputExceeded
+      Namespace: AWS/Kinesis
+      Period: 60
+      Statistic: Average
+      Threshold: 0.01
+      TreatMissingData: breaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Monitoring/ReadProvisionedAlarm/Resource
+  MonitoringWriteProvisionedAlarm10BA5F74:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: StreamName
+        Value:
+          Ref: KdsDataStream4BCE778D
+      EvaluationPeriods: 1
+      MetricName: WriteProvisionedThroughputExceeded
+      Namespace: AWS/Kinesis
+      Period: 60
+      Statistic: Average
+      Threshold: 0.01
+      TreatMissingData: breaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Monitoring/WriteProvisionedAlarm/Resource
+  MonitoringPutRecordAlarm031B586D:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: LessThanOrEqualToThreshold
+      Dimensions:
+      - Name: StreamName
+        Value:
+          Ref: KdsDataStream4BCE778D
+      EvaluationPeriods: 1
+      MetricName: PutRecord.Success
+      Namespace: AWS/Kinesis
+      Period: 60
+      Statistic: Average
+      Threshold: 0.95
+      TreatMissingData: notBreaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Monitoring/PutRecordAlarm/Resource
+  MonitoringPutRecordsAlarm31F555DD:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: LessThanOrEqualToThreshold
+      Dimensions:
+      - Name: StreamName
+        Value:
+          Ref: KdsDataStream4BCE778D
+      EvaluationPeriods: 1
+      MetricName: PutRecords.Success
+      Namespace: AWS/Kinesis
+      Period: 60
+      Statistic: Average
+      Threshold: 0.95
+      TreatMissingData: notBreaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Monitoring/PutRecordsAlarm/Resource
+  MonitoringGetRecordsAlarmD8EFE514:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: LessThanOrEqualToThreshold
+      Dimensions:
+      - Name: StreamName
+        Value:
+          Ref: KdsDataStream4BCE778D
+      EvaluationPeriods: 1
+      MetricName: GetRecords.Success
+      Namespace: AWS/Kinesis
+      Period: 60
+      Statistic: Average
+      Threshold: 0.98
+      TreatMissingData: breaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Monitoring/GetRecordsAlarm/Resource
+  MonitoringDataFreshnessAlarmF0FD627B:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+      - Name: DeliveryStreamName
+        Value:
+          Fn::If:
+          - KdfDynamicPartitioningEnabledD334A2F5
+          - Fn::GetAtt:
+            - KdfDeliveryStreamWithDPFB4C9017
+            - Arn
+          - Fn::GetAtt:
+            - KdfDeliveryStreamWithoutDP7F328E8D
+            - Arn
+      EvaluationPeriods: 1
+      MetricName: DeliveryToS3.DataFreshness
+      Namespace: AWS/Firehose
+      Period: 300
+      Statistic: Maximum
+      Threshold: 900
+      TreatMissingData: breaching
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/Monitoring/DataFreshnessAlarm/Resource
+  SolutionHelperRoleC017C62A:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource:
+              Fn::Join:
+              - ''
+              - - 'arn:'
+                - Ref: AWS::Partition
+                - ":logs:"
+                - Ref: AWS::Region
+                - ":"
+                - Ref: AWS::AccountId
+                - ":log-group:/aws/lambda/*"
+          Version: '2012-10-17'
+        PolicyName: CloudWatchLogsPolicy
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/SolutionHelper/Role/Role/Resource
+      guard:
+        SuppressedRules:
+        - IAM_NO_INLINE_POLICY_CHECK
+  SolutionHelper4825923B:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket:
+          Fn::Sub: solutions-${AWS::Region}
+        S3Key: streaming-data-solution-for-amazon-kinesis/v1.9.3/assetf2e3530fe7687e60ce1542d3567b9775909ff357d1a6781858ebe1a5fe88ed0d.zip
+      Description: This function generates UUID for each deployment and sends anonymous
+        data to the AWS Solutions team
+      Environment:
+        Variables:
+          AWS_SDK_USER_AGENT: '{ "user_agent_extra": "AwsSolution/SO0124/v1.9.3" }'
+      Handler: lambda_function.handler
+      Role:
+        Fn::GetAtt:
+        - SolutionHelperRoleC017C62A
+        - Arn
+      Runtime: python3.12
+      Timeout: 30
+    DependsOn:
+    - SolutionHelperRoleC017C62A
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/SolutionHelper/SolutionHelper/Resource
+      aws:asset:path: asset.f2e3530fe7687e60ce1542d3567b9775909ff357d1a6781858ebe1a5fe88ed0d
+      aws:asset:is-bundled: false
+      aws:asset:property: Code
+      cfn_nag:
+        rules_to_suppress:
+        - id: W89
+          reason: This function does not need to be deployed in a VPC
+        - id: W92
+          reason: This function does not require reserved concurrency
+    Condition: SolutionHelperAnonymousDatatoAWSD898118F
+  SolutionHelperCreateUniqueIDAF03406A:
+    Type: Custom::CreateUUID
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+        - SolutionHelper4825923B
+        - Arn
+      Resource: UUID
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/SolutionHelper/CreateUniqueID/Default
+    Condition: SolutionHelperAnonymousDatatoAWSD898118F
+  SolutionHelperSendAnonymousData9B19E31D:
+    Type: Custom::AnonymousData
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+        - SolutionHelper4825923B
+        - Arn
+      Resource: AnonymousMetric
+      UUID:
+        Fn::GetAtt:
+        - SolutionHelperCreateUniqueIDAF03406A
+        - UUID
+      Region:
+        Ref: AWS::Region
+      SolutionId: SO0124
+      Version: v1.9.3
+      Pattern: KdsKdfS3
+      ShardCount:
+        Ref: ShardCount
+      RetentionHours:
+        Ref: RetentionHours
+      EnhancedMonitoring:
+        Ref: EnableEnhancedMonitoring
+      BufferingSize:
+        Ref: BufferingSize
+      BufferingInterval:
+        Ref: BufferingInterval
+      CompressionFormat:
+        Ref: CompressionFormat
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/SolutionHelper/SendAnonymousData/Default
+    Condition: SolutionHelperAnonymousDatatoAWSD898118F
+  ? AppRegistry19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4eAppRegistrySetupAppRegistry19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4e25B1ECCE
+  : Type: AWS::ServiceCatalogAppRegistry::Application
+    Properties:
+      Description: Service Catalog application to track and manage all your resources
+        for the solution streaming-data-solution-for-amazon-kinesis
+      Name:
+        Fn::Join:
+        - "-"
+        - - App
+          - Ref: AWS::StackName
+          - sds-amazon-kinesis
+      Tags:
+        Solutions:ApplicationType: AWS-Solutions
+        Solutions:SolutionID: SO0124
+        Solutions:SolutionName: streaming-data-solution-for-amazon-kinesis
+        Solutions:SolutionVersion: v1.9.3
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/AppRegistry-19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4e/AppRegistrySetup-AppRegistry-19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4e/Resource
+  ? AppRegistry19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4eAppRegistrySetupAppRegistry19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4eAttributeGroupAssociatione3fce846c5b4D11416E1
+  : Type: AWS::ServiceCatalogAppRegistry::AttributeGroupAssociation
+    Properties:
+      Application:
+        Fn::GetAtt:
+        - AppRegistry19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4eAppRegistrySetupAppRegistry19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4e25B1ECCE
+        - Id
+      AttributeGroup:
+        Fn::GetAtt:
+        - AppRegistry19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4eApplicationAttributesAF98E481
+        - Id
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/AppRegistry-19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4e/AppRegistrySetup-AppRegistry-19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4e/AttributeGroupAssociatione3fce846c5b4
+  AppRegistry19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4eApplicationAttributesAF98E481:
+    Type: AWS::ServiceCatalogAppRegistry::AttributeGroup
+    Properties:
+      Attributes:
+        applicationType: AWS-Solutions
+        version: v1.9.3
+        solutionID: SO0124
+        solutionName: streaming-data-solution-for-amazon-kinesis
+      Description: Attributes for Solutions Metadata
+      Name:
+        Fn::Join:
+        - ''
+        - - AttrGrp-
+          - Ref: AWS::StackName
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/AppRegistry-19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4e/ApplicationAttributes/Resource
+  AppRegistryAssociation:
+    Type: AWS::ServiceCatalogAppRegistry::ResourceAssociation
+    Properties:
+      Application:
+        Fn::GetAtt:
+        - AppRegistry19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4eAppRegistrySetupAppRegistry19f64747549cc1fdc69952d91e424191d0b65b2ae7264fd9df770a95b80ffe4e25B1ECCE
+        - Id
+      Resource:
+        Ref: AWS::StackId
+      ResourceType: CFN_STACK
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/AppRegistryAssociation
+  CDKMetadata:
+    Type: AWS::CDK::Metadata
+    Properties:
+      Analytics: v2:deflate64:H4sIAAAAAAAA/3VRy24CMQz8Fu4hLNAP6ELVnqoi+ADkzRowZJMoTkAoyr9XWZZCD5xmYo8f48xkms6mshrBhceqPY01NTJtAqiTWO7MCjx0GNALuPA2ncggExeBR+iK4sayIOhkWluNJdjjympS175Lz7LQ0DUtyPQZjQpkTcndeRY83wIzBpZ1AcFzmRZRnTAsgFHcaCkZ2A0eU57fWQyr7sjjwTLK5c58oKYz+uuwvNI2thcI6iDTB/ChseDb0ujxqDX43mVPsmD0Z1KoIIC2e3DO4544+KtMReScJgV3Z3UInpoY8Mvb6Gpmq+hFsr8Zso1e4ZMwZ3GPiv4mmwB7MnuxjBxs95d7qi58aU1L90Hf4FxfsjM/MbgYsphWM1mNQbsDyGr0Pvz8pOBLg4M8PXv87yFnYWyL8siT86yS0zdZjY5MNPbRBOpQrm/4CzfazxRyAgAA
+    Metadata:
+      aws:cdk:path: streaming-data-solution-for-kinesis-using-kinesis-data-firehose-and-amazon-s3/CDKMetadata/Default
+    Condition: CDKMetadataAvailable
+Conditions:
+  KdfDynamicPartitioningEnabledD334A2F5:
+    Fn::Equals:
+    - Ref: DynamicPartitioning
+    - Enabled
+  KdfDynamicPartitioningDisabledA489FB59:
+    Fn::Equals:
+    - Ref: DynamicPartitioning
+    - Disabled
+  KdfNewLineDelimiter1D177307:
+    Fn::Equals:
+    - Ref: NewLineDelimiter
+    - Enabled
+  SolutionHelperAnonymousDatatoAWSD898118F:
+    Fn::Equals:
+    - Fn::FindInMap:
+      - SolutionHelperAnonymousData14B64A81
+      - SendAnonymousData
+      - Data
+    - 'Yes'
+  CDKMetadataAvailable:
+    Fn::Or:
+    - Fn::Or:
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - af-south-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ap-east-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ap-northeast-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ap-northeast-2
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ap-south-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ap-southeast-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ap-southeast-2
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - ca-central-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - cn-north-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - cn-northwest-1
+    - Fn::Or:
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - eu-central-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - eu-north-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - eu-south-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - eu-west-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - eu-west-2
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - eu-west-3
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - il-central-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - me-central-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - me-south-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - sa-east-1
+    - Fn::Or:
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - us-east-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - us-east-2
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - us-west-1
+      - Fn::Equals:
+        - Ref: AWS::Region
+        - us-west-2
+Mappings:
+  SolutionHelperAnonymousData14B64A81:
+    SendAnonymousData:
+      Data: 'Yes'
+Outputs:
+  DataStreamName:
+    Description: Name of the Amazon Kinesis Data stream
+    Value:
+      Ref: KdsDataStream4BCE778D
+  DeliveryStreamName:
+    Description: Name of the Amazon Kinesis Data Firehose delivery stream
+    Value:
+      Fn::If:
+      - KdfDynamicPartitioningEnabledD334A2F5
+      - Ref: KdfDeliveryStreamWithDPFB4C9017
+      - Ref: KdfDeliveryStreamWithoutDP7F328E8D
+  OutputBucketName:
+    Description: Name of the Amazon S3 destination bucket
+    Value:
+      Ref: KdfOutputBucket89D2E122
