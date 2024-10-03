@@ -88,8 +88,8 @@ if __name__ == '__main__':
     kinesis_client = boto3.client(
         "kinesis",
         region_name='ap-southeast-1',
-        aws_access_key_id="XXXXXXXXXXXXX",
-        aws_secret_access_key="XXXXXXXXXXXXXXX"
+        aws_access_key_id="XXXXXXXXXX",
+        aws_secret_access_key="XXXXXXXXXX"
     )
     
     stockStream = StockTradesReader(kinesis_client=kinesis_client, streamName=streamName)
